@@ -456,35 +456,64 @@ class TrayController:
         return make_tray_icon_image()
 
     def start(self) -> bool:
-        """创建托盘图标并在后台线程运行消息循环。返回是否成功。"""
+        """创建托盘图标并在后台线程运行消息循环。返回是否成功。
+
+        附带一个自愈监控线程：若托盘图标线程异常退出（例如 explorer.exe 崩溃重启
+        导致图标丢失），自动重建图标。
+        """
         if not TRAY_AVAILABLE:
             return False
         try:
-            menu = pystray.Menu(
-                pystray.MenuItem("显示主窗口", self._cb_show, default=True),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("启动 DSH", self._cb_start),
-                pystray.MenuItem("停止 DSH", self._cb_stop),
-                pystray.MenuItem("重启 DSH", self._cb_restart),
-                pystray.MenuItem("打开 Web UI", self._cb_open),
-                pystray.MenuItem("关闭外部占用实例", self._cb_kill_external),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("重启程序", self._cb_restart_program),
-                pystray.MenuItem("退出", self._cb_quit),
-            )
-            self._icon = pystray.Icon(
-                "dsh-desktop-launcher",
-                self._make_image(),
-                f"{APP_NAME} — DeepSeek Harness",
-                menu,
-            )
-            self._thread = threading.Thread(target=self._icon.run, daemon=True, name="tray-icon")
-            self._thread.start()
+            self._create_icon()
+            self._start_watchdog()
             return True
         except Exception as e:
             self._icon = None
             self.app._post_status(f"托盘启动失败（不影响使用）: {e}")
             return False
+
+    def _create_icon(self):
+        menu = pystray.Menu(
+            pystray.MenuItem("显示主窗口", self._cb_show, default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("启动 DSH", self._cb_start),
+            pystray.MenuItem("停止 DSH", self._cb_stop),
+            pystray.MenuItem("重启 DSH", self._cb_restart),
+            pystray.MenuItem("打开 Web UI", self._cb_open),
+            pystray.MenuItem("关闭外部占用实例", self._cb_kill_external),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("重启程序", self._cb_restart_program),
+            pystray.MenuItem("退出", self._cb_quit),
+        )
+        self._icon = pystray.Icon(
+            "dsh-desktop-launcher",
+            self._make_image(),
+            f"{APP_NAME} — DeepSeek Harness",
+            menu,
+        )
+        self._thread = threading.Thread(target=self._icon.run, daemon=True, name="tray-icon")
+        self._thread.start()
+
+    def _start_watchdog(self):
+        """自愈监控：托盘图标线程若死亡（explorer 重启等），自动重建。"""
+
+        def watch():
+            while True:
+                time.sleep(5)
+                icon = self._icon
+                thread = self._thread
+                # 若显式停止（_icon 置 None）则退出监控
+                if icon is None or thread is None:
+                    return
+                if not thread.is_alive():
+                    self.app._post_status("检测到托盘图标丢失，正在重建…")
+                    try:
+                        self._create_icon()
+                        self.app._post_status("托盘图标已重建")
+                    except Exception as e:
+                        self.app._post_status(f"托盘图标重建失败: {e}")
+
+        threading.Thread(target=watch, daemon=True, name="tray-watchdog").start()
 
     def stop(self):
         if self._icon is not None:
@@ -493,6 +522,7 @@ class TrayController:
             except Exception:
                 pass
             self._icon = None
+            self._thread = None
 
     def notify(self, title: str, message: str):
         if self.available:
