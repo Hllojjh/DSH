@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 运行时生成（本地环境相关，不入库）
+config.json
+logs/
+*.log
+
+# 敏感信息
+.credentials.yaml
+.env
+
+# 临时文件
+*_preview.png
+_tmp_*
+
+# Windows
+Thumbs.db
+Desktop.ini
