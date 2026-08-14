@@ -4,9 +4,23 @@
 系统托盘为可选的 `pystray` + `Pillow`），用于在本机一键启动 / 停止 DSH Web UI、实时查看日志、
 配置 DeepSeek API Key。
 
-## 🚀 部署方式（三种任选）
+## 🚀 部署方式（四种任选）
 
-### 方式一：一键下载 exe（最省事，无需任何环境）
+### 方式一：安装程序（setup.exe，推荐普通用户）
+
+```
+installer/dist/DSH-Setup.exe
+```
+
+- **大小**：约 43 MB（GUI 安装向导，含启动器 exe + 图标）
+- **特点**：
+  - 双击运行 → 点"安装"→ 自动安装到 `%LOCALAPPDATA%\Programs\DSH Desktop Launcher`
+  - 自动创建**开始菜单**（静默启动）与**桌面**（普通启动）快捷方式
+  - 可在 **设置 → 应用** 中正常卸载（含卸载脚本）
+  - **无需管理员权限**
+- 安装后从开始菜单/桌面快捷方式启动即可
+
+### 方式二：一键下载 exe（便携版，无需任何环境）
 
 ```
 dist/DSH-Launcher.exe
@@ -17,7 +31,7 @@ dist/DSH-Launcher.exe
 - **兼容**：Windows 10/11 x64
 - 下载后在任意文件夹运行即可（`config.json` / `logs/` 会生成在 exe 旁边）
 
-### 方式二：npm / npx（需要 Node.js ≥16，推荐开发环境）
+### 方式三：npm / npx（需要 Node.js ≥16，推荐开发环境）
 
 ```bash
 # 克隆仓库后本地运行
