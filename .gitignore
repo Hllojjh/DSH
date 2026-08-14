@@ -5,6 +5,10 @@ __pycache__/
 .venv/
 venv/
 
+# PyInstaller 构建产物（保留 dist/ 下的 exe，忽略其余）
+build/
+*.spec
+
 # 运行时生成（本地环境相关，不入库）
 config.json
 logs/

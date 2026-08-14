@@ -58,13 +58,24 @@ POLL_MS = 600          # 状态轮询间隔
 LOG_POLL_MS = 100      # 日志队列消费间隔
 MAX_LOG_LINES = 3000   # GUI 日志区最大行数
 
-# 应用图标（托盘 + 任务栏）：优先应用目录下的 Picture/deepseek.icon，
-# 其次回退到工作区 picture/deepseek.icon，最后回退到内置绘制图标。
-ICON_CANDIDATES = [
-    APP_DIR / "Picture" / "deepseek.icon",
-    APP_DIR / "picture" / "deepseek.icon",
-    APP_DIR.parent / "picture" / "deepseek.icon",
-]
+# 应用图标（托盘 + 任务栏）：
+# - 打包成 exe 时：优先从 PyInstaller 内置资源目录（sys._MEIPASS）读取
+# - 源码运行时：应用目录下的 Picture/deepseek.icon
+# - 其次回退到工作区 picture/deepseek.icon，最后回退到内置绘制图标。
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    _bundle_dir = Path(sys._MEIPASS)
+    ICON_CANDIDATES = [
+        _bundle_dir / "Picture" / "deepseek.icon",
+        APP_DIR / "Picture" / "deepseek.icon",
+        APP_DIR / "picture" / "deepseek.icon",
+        APP_DIR.parent / "picture" / "deepseek.icon",
+    ]
+else:
+    ICON_CANDIDATES = [
+        APP_DIR / "Picture" / "deepseek.icon",
+        APP_DIR / "picture" / "deepseek.icon",
+        APP_DIR.parent / "picture" / "deepseek.icon",
+    ]
 
 DEFAULT_CONFIG = {
     "port": DEFAULT_PORT,

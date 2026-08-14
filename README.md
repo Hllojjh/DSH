@@ -4,6 +4,21 @@
 系统托盘为可选的 `pystray` + `Pillow`），用于在本机一键启动 / 停止 DSH Web UI、实时查看日志、
 配置 DeepSeek API Key。
 
+## ⬇️ 一键下载（Windows exe）
+
+无需安装 Python/Node，直接下载即可运行：
+
+```
+dist/DSH-Launcher.exe
+```
+
+- **大小**：约 30 MB（单文件，PyInstaller 打包，含 Python 运行时与全部依赖）
+- **用法**：双击运行 → 静默进入系统托盘 → 自动启动 DSH 服务 → 托盘气泡提示结果
+- **兼容**：Windows 10/11 x64
+- 下载后在任意文件夹运行即可（`config.json` / `logs/` 会生成在 exe 旁边）
+
+> 若想从源码运行或自行打包，见下文"从源码运行"与"打包成独立 exe"。
+
 ## 功能
 
 | 功能 | 说明 |
