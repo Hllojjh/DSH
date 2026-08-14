@@ -1,0 +1,39 @@
+{
+  "name": "dsh-desktop-launcher",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness (DSH) 桌面启动器 — 托盘 / 静默启动 / 开机自启 / 日志 / 解除端口占用",
+  "private": false,
+  "license": "MIT",
+  "keywords": [
+    "deepseek",
+    "dsh",
+    "harness",
+    "launcher",
+    "tray"
+  ],
+  "author": "Kiayxd",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hllojjh/DSH.git"
+  },
+  "bin": {
+    "dsh-desktop-launcher": "bin/dsh-launcher.js"
+  },
+  "scripts": {
+    "start": "node bin/dsh-launcher.js",
+    "silent": "node bin/dsh-launcher.js --silent",
+    "selftest": "python dsh_launcher.py --selftest",
+    "exe": "node bin/dsh-launcher.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "files": [
+    "bin/",
+    "dsh_launcher.py",
+    "Picture/",
+    "dist/",
+    "run.bat",
+    "README.md"
+  ]
+}

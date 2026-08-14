@@ -4,9 +4,9 @@
 系统托盘为可选的 `pystray` + `Pillow`），用于在本机一键启动 / 停止 DSH Web UI、实时查看日志、
 配置 DeepSeek API Key。
 
-## ⬇️ 一键下载（Windows exe）
+## 🚀 部署方式（三种任选）
 
-无需安装 Python/Node，直接下载即可运行：
+### 方式一：一键下载 exe（最省事，无需任何环境）
 
 ```
 dist/DSH-Launcher.exe
@@ -16,6 +16,36 @@ dist/DSH-Launcher.exe
 - **用法**：双击运行 → 静默进入系统托盘 → 自动启动 DSH 服务 → 托盘气泡提示结果
 - **兼容**：Windows 10/11 x64
 - 下载后在任意文件夹运行即可（`config.json` / `logs/` 会生成在 exe 旁边）
+
+### 方式二：npm / npx（需要 Node.js ≥16，推荐开发环境）
+
+```bash
+# 克隆仓库后本地运行
+git clone https://github.com/Hllojjh/DSH.git
+cd DSH
+
+npm start            # 启动（优先 exe，缺 exe 时自动用 python）
+npm run silent       # 静默启动到托盘
+npm run selftest     # 环境自检
+```
+
+发布到 npm registry 后（`npm publish`），可一行命令直接运行：
+
+```bash
+npx dsh-desktop-launcher          # 启动
+npx dsh-desktop-launcher --silent # 静默启动
+```
+
+> bin 脚本（`bin/dsh-launcher.js`）自动选择：存在 `dist/DSH-Launcher.exe` 就用 exe（无需 Python）；
+> 否则回退 `pythonw dsh_launcher.py`（需 Python 3.10+）。
+
+### 方式三：从源码运行（需 Python 3.10+ + Node.js）
+
+```bash
+python dsh_launcher.py            # 启动
+python dsh_launcher.py --silent   # 静默
+python dsh_launcher.py --selftest # 自检
+```
 
 > 若想从源码运行或自行打包，见下文"从源码运行"与"打包成独立 exe"。
 
@@ -166,6 +196,19 @@ python dsh_launcher.py --selftest :: 命令行自检（不打开窗口）
   端口随即释放，可正常启动。托盘菜单中也有"关闭外部占用实例"项。
 - ⚠️ 关闭外部实例会**中断该进程正在进行的任务**（例如远程访问会话），请确认后再操作。
 - API Key 明文保存在 `~/.dsh/.credentials.yaml`（与 dsh 官方凭据位置一致），请勿共享该文件。
+
+## 🔒 安全声明（本仓库不含敏感信息）
+
+本仓库（源码 + exe）**不包含任何密钥或敏感数据**，已逐项核实：
+
+- ✅ 源码/脚本中**无 API Key 值**（`DEEPSEEK_API_KEY` 仅出现在读取逻辑中，密钥运行时从
+  `~/.dsh/.credentials.yaml` 读取，该文件不入库）
+- ✅ `exe` 二进制内扫描**无 sk- 密钥**、无本机用户名/路径痕迹
+- ✅ git 历史所有提交**无密钥**
+- ✅ `.gitignore` 排除 `config.json`、`logs/`、`.credentials.yaml`、`.env`、`__pycache__` 等
+- ✅ 你的 `OpenClow.pem`（SSH 私钥）、会话记录 zip 等敏感文件**在仓库目录之外**，不会提交
+- ⚠️ 提示：`remote-*.ps1` 含本机路径（如 `C:\Users\Admin\...`），是环境相关脚本，
+  克隆到其他机器需按需调整路径；不包含任何密码/令牌。
 
 ## 目录结构
 
