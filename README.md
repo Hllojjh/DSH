@@ -224,6 +224,17 @@ DSH-desktop/
     └── dsh-web.log     # DSH 运行日志（运行时自动生成）
 ```
 
+## 🔔 托盘图标自愈（explorer 崩溃防护）
+
+Windows 的托盘（通知区域）由 `explorer.exe` 管理。若 explorer 崩溃/重启
+（可从事件查看器 `Application` → `Application Error` 看到 `Explorer.EXE` 崩溃记录），
+**所有程序的托盘图标会先消失、再重新注册**，期间可能看到图标"忽多忽少"——这是 Windows 行为，
+不是本程序的问题。
+
+本启动器内置**图标自愈监控**：每 5 秒检查托盘图标线程，若因 explorer 重启等原因丢失，
+自动重建图标并写入日志。若仍频繁出现图标异常，建议排查 explorer 崩溃诱因
+（第三方 shell 扩展、显卡驱动等）。
+
 ## （可选）打包成独立 exe
 
 如果希望不装 Python 也能运行，可用 PyInstaller 打成单个 exe：
