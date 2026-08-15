@@ -81,6 +81,7 @@ DEFAULT_CONFIG = {
     "port": DEFAULT_PORT,
     "auto_open_browser": True,
     "launch_cmd": None,  # 探测到的 dsh 启动命令，None 表示自动探测
+    "source_mode": False,  # True=以源码方式启动 DSH（node 直接跑 bin.js）；False=用 dsh.cmd
     "auto_tray_on_start": True,  # 启动后自动隐藏到系统托盘
     "close_to_tray": True,       # 点击窗口关闭按钮时最小化到托盘而非退出
     "autostart_launch_dsh": True,  # 开机自启动（--silent）时自动启动 DSH 服务
@@ -280,6 +281,44 @@ def resolve_dsh_cmd() -> str:
     if npx:
         return f"{npx} -y @deepseek-ai/dsh"
     raise RuntimeError("未找到 dsh / npx，请先安装 Node.js（https://nodejs.org）")
+
+
+def resolve_dsh_source() -> list[str]:
+    """以源码方式启动：直接定位 node.exe + dsh 源码入口 bin.js，
+    跳过 .cmd 批处理与 npx 解析层，启动更快更直接。
+
+    返回 [node_exe, bin_js]；找不到时抛出 RuntimeError。
+    """
+    # 1) 定位 node.exe
+    node = shutil.which("node.exe") or shutil.which("node")
+    if not node:
+        # 常见安装路径兜底
+        for p in (r"C:\Program Files\nodejs\node.exe", r"C:\Program Files (x86)\nodejs\node.exe"):
+            if Path(p).exists():
+                node = p
+                break
+    if not node:
+        raise RuntimeError("未找到 node.exe，请先安装 Node.js（https://nodejs.org）")
+    # 2) 定位 dsh 源码入口 bin.js（npx 缓存）
+    try:
+        local = Path(os.environ.get("LOCALAPPDATA", ""))
+        if local.exists():
+            candidates = glob.glob(
+                str(local / "npm-cache" / "_npx" / "*" / "node_modules" / "@deepseek-ai" / "dsh" / "lib" / "bin.js")
+            )
+            if candidates:
+                best = max(candidates, key=os.path.getmtime)
+                return [node, best]
+    except Exception:
+        pass
+    # 3) 全局 node_modules 兜底
+    try:
+        global_bin = Path(node).resolve().parent / "node_modules" / "@deepseek-ai" / "dsh" / "lib" / "bin.js"
+        if global_bin.exists():
+            return [node, str(global_bin)]
+    except Exception:
+        pass
+    raise RuntimeError("未找到 dsh 源码（@deepseek-ai/dsh），请先执行一次 dsh 或 npx 安装")
 
 
 # --------------------------------------------------------------------------
@@ -860,16 +899,22 @@ class LauncherApp(tk.Tk):
 
     def _start_worker(self, port: int):
         try:
-            dsh_cmd = self.cfg.get("launch_cmd") or resolve_dsh_cmd()
-            # 兼容 npx fallback 形式（含空格参数）与直接路径形式
-            cmd = dsh_cmd.split() if " " in dsh_cmd else [dsh_cmd]
-            cmd = cmd + ["web", "--port", str(port)]
+            # 以源码方式启动：node 直接运行 dsh bin.js（跳过 .cmd / npx 层）
+            if self.cfg.get("source_mode", False):
+                cmd = resolve_dsh_source() + ["web", "--port", str(port)]
+                mode_note = "（源码方式: node bin.js）"
+            else:
+                dsh_cmd = self.cfg.get("launch_cmd") or resolve_dsh_cmd()
+                # 兼容 npx fallback 形式（含空格参数）与直接路径形式
+                cmd = dsh_cmd.split() if " " in dsh_cmd else [dsh_cmd]
+                cmd = cmd + ["web", "--port", str(port)]
+                mode_note = "（dsh.cmd 方式）"
             env = os.environ.copy()
             key = read_api_key()
             if key:
                 env["DEEPSEEK_API_KEY"] = key
             ok = self.dsh.start(cmd, env, str(Path.home()))
-            self._post_status(f"启动命令: {' '.join(cmd)}" + (f"（已注入 API Key）" if key else ""))
+            self._post_status(f"启动命令: {' '.join(cmd)} {mode_note}" + (f"，已注入 API Key" if key else ""))
             if not ok:
                 self._post_status("启动失败：子进程未能创建")
         except Exception as e:
@@ -1109,36 +1154,50 @@ class SettingsDialog(tk.Toplevel):
         ttk.Checkbutton(frame, text="启动完成后自动在浏览器打开 Web UI", variable=self.auto_open).grid(
             row=6, column=0, sticky="w", pady=(0, 8))
 
+        # 启动方式：以源码启动
+        self.source_mode = tk.BooleanVar(value=bool(app.cfg.get("source_mode", False)))
+        ttk.Checkbutton(
+            frame, text="以源码方式启动 DSH（node 直接运行 bin.js，跳过 npx）",
+            variable=self.source_mode,
+        ).grid(row=7, column=0, sticky="w", pady=(0, 4))
+        try:
+            src_cmd = " ".join(resolve_dsh_source())
+            source_hint = f"源码入口：{src_cmd}"
+        except Exception as e:
+            source_hint = f"源码入口：未找到（{e}）"
+        ttk.Label(frame, text=source_hint, foreground="#888", justify="left", wraplength=460).grid(
+            row=8, column=0, sticky="w", pady=(0, 8))
+
         # 托盘行为
         self.auto_tray = tk.BooleanVar(value=bool(app.cfg.get("auto_tray_on_start", True)))
         ttk.Checkbutton(frame, text="程序启动后自动隐藏到系统托盘", variable=self.auto_tray).grid(
-            row=7, column=0, sticky="w", pady=(0, 4))
+            row=9, column=0, sticky="w", pady=(0, 4))
         self.close_to_tray = tk.BooleanVar(value=bool(app.cfg.get("close_to_tray", True)))
         ttk.Checkbutton(frame, text="点击窗口关闭按钮（X）时最小化到托盘而非退出", variable=self.close_to_tray).grid(
-            row=8, column=0, sticky="w", pady=(0, 4))
+            row=10, column=0, sticky="w", pady=(0, 4))
         tray_hint = ("（需要 pystray + Pillow；未安装时自动回退为普通窗口行为）"
                      if not TRAY_AVAILABLE else "（托盘图标双击可恢复主窗口）")
         ttk.Label(frame, text=tray_hint, foreground="#888").grid(
-            row=9, column=0, sticky="w", pady=(2, 8))
+            row=11, column=0, sticky="w", pady=(2, 8))
 
         # 开机自启动
         self.autostart_var = tk.BooleanVar(value=autostart_enabled())
         ttk.Checkbutton(
             frame, text="开机自启动（静默启动到系统托盘，不显示窗口）",
             variable=self.autostart_var, command=self._on_autostart_toggle,
-        ).grid(row=10, column=0, sticky="w", pady=(4, 4))
+        ).grid(row=12, column=0, sticky="w", pady=(4, 4))
         self.autostart_dsh_var = tk.BooleanVar(value=bool(app.cfg.get("autostart_launch_dsh", True)))
         ttk.Checkbutton(
             frame, text="自启动时自动启动 DSH 服务", variable=self.autostart_dsh_var,
-        ).grid(row=11, column=0, sticky="w", pady=(0, 4))
+        ).grid(row=13, column=0, sticky="w", pady=(0, 4))
         autostart_hint = (f"注册表位置：HKCU\\{AUTOSTART_REG_KEY}\\{AUTOSTART_NAME}\n"
                           f"命令行：{autostart_command()}")
         ttk.Label(frame, text=autostart_hint, foreground="#888", justify="left").grid(
-            row=12, column=0, sticky="w", pady=(2, 8))
+            row=14, column=0, sticky="w", pady=(2, 8))
 
         # 底部按钮
         btns = ttk.Frame(frame)
-        btns.grid(row=13, column=0, sticky="e", pady=(8, 0))
+        btns.grid(row=15, column=0, sticky="e", pady=(8, 0))
         ttk.Button(btns, text="保存", command=self._save).pack(side="left")
         ttk.Button(btns, text="取消", command=self.destroy).pack(side="left", padx=(8, 0))
 
@@ -1183,6 +1242,7 @@ class SettingsDialog(tk.Toplevel):
             return
         self.app.cfg["port"] = port
         self.app.cfg["auto_open_browser"] = bool(self.auto_open.get())
+        self.app.cfg["source_mode"] = bool(self.source_mode.get())
         self.app.cfg["auto_tray_on_start"] = bool(self.auto_tray.get())
         self.app.cfg["close_to_tray"] = bool(self.close_to_tray.get())
         self.app.cfg["autostart_launch_dsh"] = bool(self.autostart_dsh_var.get())
@@ -1190,6 +1250,7 @@ class SettingsDialog(tk.Toplevel):
         self.app.port_label.config(text=f"端口 {port}")
         self.app._post_status(
             f"设置已保存：端口 {port}，自动打开浏览器 {'开' if self.app.cfg['auto_open_browser'] else '关'}，"
+            f"源码启动 {'开' if self.app.cfg['source_mode'] else '关'}，"
             f"启动隐藏托盘 {'开' if self.app.cfg['auto_tray_on_start'] else '关'}，"
             f"关闭最小化托盘 {'开' if self.app.cfg['close_to_tray'] else '关'}，"
             f"自启动自动拉 DSH {'开' if self.app.cfg['autostart_launch_dsh'] else '关'}"
@@ -1271,6 +1332,11 @@ def selftest():
         print(f"[selftest] 应用图标: 已加载 ({icon.size[0]}x{icon.size[1]}, 来自 {found})")
     else:
         print(f"[selftest] 应用图标: 未找到，使用内置图标")
+    try:
+        src = resolve_dsh_source()
+        print(f"[selftest] 源码启动: 可用 ({src[0]} + {Path(src[1]).name})")
+    except Exception as e:
+        print(f"[selftest] 源码启动: 不可用 -> {e}")
     print(f"[selftest] 开机自启动: {'已开启 (静默模式)' if autostart_enabled() else '未开启'}")
     print(f"[selftest] 自启动命令行: {autostart_command()}")
     fixed = profile_fixed_port()
