@@ -54,6 +54,11 @@ LOG_FILE = APP_DIR / "logs" / "dsh-web.log"
 DSH_HOME = Path(os.environ.get("DSH_HOME", str(Path.home() / ".dsh")))
 CRED_FILE = DSH_HOME / ".credentials.yaml"
 DEFAULT_PORT = 3080
+OFFICIAL_DSH_VERSION = "0.1.0-rc.6"
+# 本地源码构建入口（存在时优先使用；不存在则退回 npx 缓存 / 全局安装）
+LOCAL_SOURCE_BIN = Path(r"D:\DS-harness\deepseek-harness\apps\cli\lib\bin.js")
+# DSH profile 补丁：webserver 固定端口写在这里才真正生效（补丁层优先于命令行 --port）
+PROFILE_PATCH_FILE = DSH_HOME / "profiles" / "web" / "cordis.patch.yml"
 POLL_MS = 600          # 状态轮询间隔
 LOG_POLL_MS = 100      # 日志队列消费间隔
 MAX_LOG_LINES = 3000   # GUI 日志区最大行数
@@ -287,6 +292,8 @@ def resolve_dsh_source() -> list[str]:
     """以源码方式启动：直接定位 node.exe + dsh 源码入口 bin.js，
     跳过 .cmd 批处理与 npx 解析层，启动更快更直接。
 
+    优先使用本地源码构建（D:\\DS-harness\\deepseek-harness\\apps\\cli），
+    其次 npx 缓存，最后全局 node_modules。
     返回 [node_exe, bin_js]；找不到时抛出 RuntimeError。
     """
     # 1) 定位 node.exe
@@ -299,7 +306,10 @@ def resolve_dsh_source() -> list[str]:
                 break
     if not node:
         raise RuntimeError("未找到 node.exe，请先安装 Node.js（https://nodejs.org）")
-    # 2) 定位 dsh 源码入口 bin.js（npx 缓存）
+    # 2) 本地源码构建优先
+    if LOCAL_SOURCE_BIN.exists():
+        return [node, str(LOCAL_SOURCE_BIN)]
+    # 3) npx 缓存
     try:
         local = Path(os.environ.get("LOCALAPPDATA", ""))
         if local.exists():
@@ -311,7 +321,7 @@ def resolve_dsh_source() -> list[str]:
                 return [node, best]
     except Exception:
         pass
-    # 3) 全局 node_modules 兜底
+    # 4) 全局 node_modules 兜底
     try:
         global_bin = Path(node).resolve().parent / "node_modules" / "@deepseek-ai" / "dsh" / "lib" / "bin.js"
         if global_bin.exists():
@@ -319,6 +329,32 @@ def resolve_dsh_source() -> list[str]:
     except Exception:
         pass
     raise RuntimeError("未找到 dsh 源码（@deepseek-ai/dsh），请先执行一次 dsh 或 npx 安装")
+
+
+def install_dsh(version: str = OFFICIAL_DSH_VERSION) -> bool:
+    """安装/更新正式版 dsh CLI（npm 全局安装 @deepseek-ai/dsh）。
+
+    需要 Node.js / npm。返回 True 表示安装成功；失败时抛出 RuntimeError。
+    """
+    npm = shutil.which("npm.cmd") or shutil.which("npm")
+    if not npm:
+        raise RuntimeError("未找到 npm，请先安装 Node.js（https://nodejs.org）")
+    pkg = "@deepseek-ai/dsh" if not version else f"@deepseek-ai/dsh@{version}"
+    # 先卸载旧的全局安装（可能是本地源码 link，直接覆盖会导致 npm 报错），忽略卸载失败
+    subprocess.run(
+        [npm, "uninstall", "-g", "@deepseek-ai/dsh"],
+        capture_output=True, text=True, timeout=300,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    proc = subprocess.run(
+        [npm, "install", "-g", pkg],
+        capture_output=True, text=True, timeout=900,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"npm install 失败（退出码 {proc.returncode}）\n{detail[:500]}")
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -351,6 +387,72 @@ def profile_fixed_port() -> int | None:
     except Exception:
         pass
     return None
+
+
+def set_profile_port(port: int) -> bool:
+    """把 webserver 端口写入 ~/.dsh/profiles/web/cordis.patch.yml。
+
+    只有同时改 profile 补丁，端口设置才会真正生效
+    （dsh 的补丁层优先级高于命令行 --port）。返回是否写入成功。
+    """
+    try:
+        PROFILE_PATCH_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if PROFILE_PATCH_FILE.exists():
+            text = PROFILE_PATCH_FILE.read_text(encoding="utf-8")
+        else:
+            text = ""
+        has_bom = text.startswith("\ufeff")
+        if has_bom:
+            text = text[1:]
+
+        idx = text.find("id: webserver")
+        if idx != -1:
+            segment_end = text.find("\n- id:", idx + 1)
+            if segment_end == -1:
+                segment_end = len(text)
+            segment = text[idx:segment_end]
+            lines = segment.splitlines(keepends=True)
+            new_lines: list[str] = []
+            port_written = False
+            host_found = False
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith("port:"):
+                    indent = line[: len(line) - len(line.lstrip())]
+                    new_lines.append(f"{indent}port: {port}\n")
+                    port_written = True
+                else:
+                    new_lines.append(line)
+                if stripped.startswith("host:"):
+                    host_found = True
+            if not port_written:
+                insert_at = len(new_lines)
+                indent = "    "
+                for i, line in enumerate(new_lines):
+                    if line.strip() == "config:":
+                        insert_at = i + 1
+                    if line.strip().startswith("host:"):
+                        insert_at = i + 1
+                if not host_found:
+                    new_lines.insert(insert_at, f"{indent}host: '0.0.0.0'\n")
+                    insert_at += 1
+                new_lines.insert(insert_at, f"{indent}port: {port}\n")
+            text = text[:idx] + "".join(new_lines) + text[segment_end:]
+        else:
+            entry = (
+                "\n- id: webserver\n"
+                "  config:\n"
+                "    host: '0.0.0.0'\n"
+                f"    port: {port}\n"
+            )
+            if text and not text.endswith("\n"):
+                text += "\n"
+            text += entry
+
+        PROFILE_PATCH_FILE.write_text(("\ufeff" if has_bom else "") + text, encoding="utf-8")
+        return True
+    except Exception:
+        return False
 
 
 def port_in_use(port: int) -> bool:
@@ -519,6 +621,7 @@ class TrayController:
             pystray.MenuItem("停止 DSH", self._cb_stop),
             pystray.MenuItem("重启 DSH", self._cb_restart),
             pystray.MenuItem("打开 Web UI", self._cb_open),
+            pystray.MenuItem("安装/更新 DSH", self._cb_install),
             pystray.MenuItem("关闭外部占用实例", self._cb_kill_external),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("重启程序", self._cb_restart_program),
@@ -586,6 +689,9 @@ class TrayController:
 
     def _cb_open(self, icon, item):
         self.app.after(0, self.app._on_open)
+
+    def _cb_install(self, icon, item):
+        self.app.after(0, self.app._on_install_dsh)
 
     def _cb_kill_external(self, icon, item):
         self.app.after(0, self.app._on_kill_external)
@@ -801,6 +907,8 @@ class LauncherApp(tk.Tk):
         self.btn_restart_prog.pack(side="left", padx=(6, 0))
         right_row2 = ttk.Frame(right_col)
         right_row2.pack(anchor="e")
+        self.btn_install = ttk.Button(right_row2, text="⬇ 安装 DSH", command=self._on_install_dsh, width=13)
+        self.btn_install.pack(side="left")
         self.btn_settings = ttk.Button(right_row2, text="⚙ 设置", command=self._on_settings, width=13)
         self.btn_settings.pack(side="left")
         self.btn_refresh = ttk.Button(right_row2, text="🔄 刷新", command=self._refresh_status, width=13)
@@ -827,13 +935,9 @@ class LauncherApp(tk.Tk):
         try:
             self.dsh_path_label.config(text=f"dsh: {resolve_dsh_cmd()}")
         except Exception as e:
-            self.dsh_path_label.config(text=f"dsh: 未找到（{e}）")
-        # 若 profile 固定了端口，提示用户设置里的端口不会生效
-        if self._profile_port and self._profile_port != int(self.cfg.get("port", DEFAULT_PORT)):
-            self._post_status(
-                f"提示：profile（cordis.patch.yml）将 webserver 固定为端口 {self._profile_port}，"
-                f"设置里的端口 {self.cfg.get('port')} 不会生效，实际使用 {self._profile_port}"
-            )
+            self.dsh_path_label.config(text="dsh: 未找到（可点“⬇ 安装 DSH”）")
+        # 端口统一以 profile 为准；在 ⚙ 设置里修改会同步写回 profile
+        self._post_status(f"端口：{self.effective_port()}（可在 ⚙ 设置中修改，保存后立即生效）")
 
     # ---------- 状态刷新 ----------
 
@@ -1040,6 +1144,45 @@ class LauncherApp(tk.Tk):
     def _on_settings(self):
         SettingsDialog(self)
 
+    def _on_install_dsh(self):
+        """安装入口：检测 dsh；未检测到时一键安装正式版。"""
+        try:
+            found = resolve_dsh_cmd()
+        except Exception:
+            found = None
+        if found:
+            if not messagebox.askyesno(
+                APP_NAME,
+                f"已检测到 dsh：{found}\n\n"
+                f"仍要安装/更新正式版 @deepseek-ai/dsh@{OFFICIAL_DSH_VERSION} 吗？",
+            ):
+                return
+        else:
+            if not messagebox.askyesno(
+                APP_NAME,
+                f"未检测到 dsh 命令行。\n\n"
+                f"是否现在安装正式版 DSH（@deepseek-ai/dsh@{OFFICIAL_DSH_VERSION}）？\n"
+                f"需要 Node.js，将执行：npm install -g @deepseek-ai/dsh@{OFFICIAL_DSH_VERSION}",
+            ):
+                return
+        self.btn_install.config(state="disabled")
+        self._post_status(
+            f"正在安装 dsh CLI：npm install -g @deepseek-ai/dsh@{OFFICIAL_DSH_VERSION} …"
+        )
+        threading.Thread(target=self._install_dsh_worker, daemon=True, name="dsh-install").start()
+
+    def _install_dsh_worker(self):
+        try:
+            install_dsh(OFFICIAL_DSH_VERSION)
+            self._post_status("dsh CLI 安装/更新完成，可直接启动 DSH")
+        except Exception as e:
+            self._post_status(f"dsh CLI 安装失败：{e}")
+            self._call_main(lambda: messagebox.showerror(APP_NAME, f"dsh CLI 安装失败：\n{e}"))
+        finally:
+            self._call_main(lambda: self.btn_install.config(state="normal"))
+            self._call_main(self._refresh_status)
+            self._call_main(self._apply_config_to_ui)
+
     # ---------- 日志 ----------
 
     def _post_status(self, msg: str):
@@ -1114,7 +1257,7 @@ class SettingsDialog(tk.Toplevel):
     def __init__(self, app: LauncherApp):
         super().__init__(app)
         self.app = app
-        self.title("设置 — API Key / 端口")
+        self.title("设置 — API Key / 端口 / 启动方式")
         self.resizable(False, False)
         self.transient(app)
         self.grab_set()
@@ -1137,17 +1280,14 @@ class SettingsDialog(tk.Toplevel):
 
         # 端口
         ttk.Label(frame, text="Web UI 端口").grid(row=4, column=0, sticky="w", pady=(6, 4))
-        self.port_var = tk.IntVar(value=int(app.cfg.get("port", DEFAULT_PORT)))
+        self.port_var = tk.IntVar(value=int(app.effective_port()))
         port_spin = ttk.Spinbox(frame, from_=1024, to=65535, textvariable=self.port_var, width=10)
         port_spin.grid(row=5, column=0, sticky="w", pady=(0, 8))
-        if app._profile_port:
-            fixed_hint = (f"注意：profile（cordis.patch.yml）已将 webserver 固定为端口 "
-                          f"{app._profile_port}，此处修改不会生效，实际始终使用 {app._profile_port}。")
-        else:
-            fixed_hint = None
-        if fixed_hint:
-            ttk.Label(frame, text=fixed_hint, foreground="#b26a00", wraplength=420).grid(
-                row=5, column=1, sticky="w", padx=(10, 0))
+        ttk.Label(
+            frame,
+            text="保存后会同步写入 profile（cordis.patch.yml）并立即生效；DSH 运行中会询问是否重启。",
+            foreground="#666", wraplength=420,
+        ).grid(row=5, column=1, sticky="w", padx=(10, 0))
 
         # 自动打开浏览器
         self.auto_open = tk.BooleanVar(value=bool(app.cfg.get("auto_open_browser", True)))
@@ -1157,7 +1297,7 @@ class SettingsDialog(tk.Toplevel):
         # 启动方式：以源码启动
         self.source_mode = tk.BooleanVar(value=bool(app.cfg.get("source_mode", False)))
         ttk.Checkbutton(
-            frame, text="以源码方式启动 DSH（node 直接运行 bin.js，跳过 npx）",
+            frame, text="以源码方式启动 DSH（优先本地源码 D:\\DS-harness\\deepseek-harness，找不到再退回 npx 缓存）",
             variable=self.source_mode,
         ).grid(row=7, column=0, sticky="w", pady=(0, 4))
         try:
@@ -1240,24 +1380,42 @@ class SettingsDialog(tk.Toplevel):
         except ValueError:
             messagebox.showwarning("设置", "端口必须是 1024–65535 之间的数字。", parent=self)
             return
+        old_port = int(self.app.cfg.get("port", DEFAULT_PORT))
         self.app.cfg["port"] = port
         self.app.cfg["auto_open_browser"] = bool(self.auto_open.get())
         self.app.cfg["source_mode"] = bool(self.source_mode.get())
         self.app.cfg["auto_tray_on_start"] = bool(self.auto_tray.get())
         self.app.cfg["close_to_tray"] = bool(self.close_to_tray.get())
         self.app.cfg["autostart_launch_dsh"] = bool(self.autostart_dsh_var.get())
+        if not set_profile_port(port):
+            messagebox.showwarning(
+                "设置",
+                "端口已保存到启动器配置，但同步写入 profile（cordis.patch.yml）失败，端口可能不会生效。",
+                parent=self,
+            )
+        self.app._profile_port = profile_fixed_port()
         save_config(self.app.cfg)
-        self.app.port_label.config(text=f"端口 {port}")
+        self.app.port_label.config(text=f"端口 {self.app.effective_port()}")
         self.app._post_status(
-            f"设置已保存：端口 {port}，自动打开浏览器 {'开' if self.app.cfg['auto_open_browser'] else '关'}，"
-            f"源码启动 {'开' if self.app.cfg['source_mode'] else '关'}，"
-            f"启动隐藏托盘 {'开' if self.app.cfg['auto_tray_on_start'] else '关'}，"
-            f"关闭最小化托盘 {'开' if self.app.cfg['close_to_tray'] else '关'}，"
-            f"自启动自动拉 DSH {'开' if self.app.cfg['autostart_launch_dsh'] else '关'}"
+            f"设置已保存：端口 {port}（已同步写入 profile）"
+            + f"，自动打开浏览器 {'开' if self.app.cfg['auto_open_browser'] else '关'}，"
+            + f"源码启动 {'开' if self.app.cfg['source_mode'] else '关'}，"
+            + f"启动隐藏托盘 {'开' if self.app.cfg['auto_tray_on_start'] else '关'}，"
+            + f"关闭最小化托盘 {'开' if self.app.cfg['close_to_tray'] else '关'}，"
+            + f"自启动自动拉 DSH {'开' if self.app.cfg['autostart_launch_dsh'] else '关'}"
             + ("，已写入 API Key" if key else "")
         )
         self.app._refresh_status()
         self.destroy()
+        if port != old_port:
+            if self.app.dsh.alive:
+                if messagebox.askyesno(APP_NAME, "端口已修改，是否立即重启 DSH 使新端口生效？"):
+                    self.app.after(300, self.app._on_restart)
+            elif self.app._state == "external":
+                self.app._post_status(
+                    f"提示：端口 {old_port} 仍被外部实例占用，请先使用“⛔ 关闭占用”"
+                    f"再启动 DSH 以应用新端口 {port}"
+                )
 
 
 # --------------------------------------------------------------------------

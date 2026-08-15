@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop-launcher",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DeepSeek Harness (DSH) 桌面启动器 — 托盘 / 静默启动 / 开机自启 / 日志 / 解除端口占用",
   "private": false,
   "license": "MIT",

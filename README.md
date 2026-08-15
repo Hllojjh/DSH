@@ -68,14 +68,15 @@ python dsh_launcher.py --selftest # 自检
 | 功能 | 说明 |
 |---|---|
 | ▶ 启动 DSH | 调用 `dsh web --port <端口>`（默认 3080）在后台启动 DSH Web UI |
-| 🧩 以源码启动 | 可在 ⚙ 设置中开启：直接用 `node` 运行 dsh 源码 `bin.js`，跳过 npx/.cmd 层，启动更快 |
+| ⬇ 安装 DSH | 未检测到 dsh 命令行时，可在主窗口/托盘一键安装正式版 `@deepseek-ai/dsh@0.1.0-rc.6`（需要 Node.js） |
+| 🧩 以源码启动 | 可在 ⚙ 设置中开启：优先直接用 `node` 运行本地源码仓库 `D:\DS-harness\deepseek-harness` 的 `bin.js`，找不到再退回 npx 缓存 / 全局安装 |
 | ■ 停止 DSH | 只停止**由本启动器托管**的进程树（`taskkill /T`），绝不误杀外部实例 |
 | ⛔ 关闭占用 | 端口被外部实例占用（黄色状态）时可用：二次确认后强制结束该外部进程及其子进程树 |
 | ↻ 重启 DSH | 停止 DSH 后自动重新启动 |
 | ⟳ 重启程序 | 重启启动器本身（保持 --silent 等参数；DSH 运行中先询问是否停止） |
 | ⏻ 关闭程序 | 彻底退出启动器（先询问是否停止运行中的 DSH） |
 | 🌐 打开 Web UI | 在浏览器打开 `http://127.0.0.1:<端口>` |
-| ⚙ 设置 | 填写 API Key（写入 `~/.dsh/.credentials.yaml`）、修改端口、自动打开浏览器、托盘行为开关 |
+| ⚙ 设置 | 填写 API Key（写入 `~/.dsh/.credentials.yaml`）、修改端口（自动同步到 profile 并生效）、源码启动、自动打开浏览器、托盘行为开关 |
 | 📋 实时日志 | 运行日志实时显示，并落盘到 `logs/dsh-web.log` |
 | 🔔 系统托盘 | 启动后自动隐藏到托盘；点窗口关闭按钮（X）最小化到托盘而非退出；托盘双击恢复窗口 |
 | 🚀 开机自启动 | 注册到 HKCU 注册表 Run 键，开机静默启动到托盘（不显示窗口），可自动拉起 DSH 服务 |
@@ -93,6 +94,9 @@ python dsh_launcher.py --selftest # 自检
 
 开启后日志区会显示 `（源码方式: node bin.js）` 标记。若源码入口缺失（未安装过 dsh），
 启动器会自动回退到 dsh.cmd 方式并提示。
+
+> 源码启动优先使用本机源码构建 `D:\DS-harness\deepseek-harness\apps\cli\lib\bin.js`（若存在），
+> 否则依次回退到 npx 缓存与全局安装，无需手动配置。
 
 ## 单实例保护（为什么托盘只有一个图标）
 
@@ -117,9 +121,8 @@ python dsh_launcher.py --selftest # 自检
 ## 端口说明（重要）
 
 - DSH 的端口优先级：**profile 补丁（`~/.dsh/profiles/web/cordis.patch.yml`）> 命令行 `--port`**。
-- 如果你的 profile 里给 `webserver` 固定了端口（例如为 Radmin VPN 远程访问固定 `3080`），
-  启动器设置里的端口修改**不会生效**——程序会自动检测并始终使用 profile 固定端口，
-  并在设置界面给出橙色提示。
+- 在 ⚙ 设置中修改端口时，启动器会**同时写入 profile 补丁**（`cordis.patch.yml`），
+  因此修改会真正生效；若 DSH 正在运行，保存后会询问是否立即重启。
 - 默认无 profile 固定端口时，使用启动器设置里的端口（默认 3080）。
 
 ## 启动方式
@@ -183,7 +186,7 @@ python -m pip install pystray pillow
 
 - Windows 10/11
 - Python 3.10+（开发机已验证 3.14.3，自带 tkinter）
-- Node.js（dsh 依赖；启动器会自动定位 npx 缓存中的 `dsh`，离线可用）
+- Node.js（dsh 依赖；启动器会自动定位 npx 缓存中的 `dsh`，离线可用；未检测到 dsh 时可点“⬇ 安装 DSH”一键安装）
 
 ## 使用方法
 
@@ -281,12 +284,12 @@ pyinstaller --onefile --windowed --name DSH-Launcher dsh_launcher.py
 |---|---|
 | 点击启动后很快回到"已停止" | 打开日志区查看报错；大概率是 `npx` 首次拉取较慢或端口被占 |
 | 提示端口被占用 | 先停止现有实例；若 profile 已固定端口（设置里会提示），请按该端口处理 |
-| 找不到 dsh | 确认已安装 Node.js；启动器会自动定位 `%LOCALAPPDATA%\npm-cache\_npx\...` 下的 dsh |
+| 找不到 dsh | 确认已安装 Node.js；点主窗口“⬇ 安装 DSH”一键安装正式版，或启动器会自动定位 `%LOCALAPPDATA%\npm-cache\_npx\...` 下的 dsh |
 | 停止后端口仍监听 | 该实例非本启动器启动，按黄色状态提示的 PID 手动 `taskkill /T /F` |
 | 启动后窗口不见了 | 正常——默认自动隐藏到托盘，双击托盘图标恢复；或在 ⚙ 设置关闭"启动后自动隐藏" |
 | 点 X 后程序没退出 | 正常——默认"关闭最小化到托盘"，托盘菜单 → 退出才是真正退出 |
 | 没有托盘图标 | 未安装 pystray/Pillow，执行 `python -m pip install pystray pillow` 后重启 |
 | 开机不自启 | 在 ⚙ 设置勾选"开机自启动"（写入注册表 Run 键）；如仍失败，检查是否被杀毒软件拦截 |
 | 开机后 DSH 没自动启动 | 检查设置中"自启动时自动启动 DSH 服务"是否开启；若端口被占则自动跳过（属正常） |
-| 改了端口却不生效 | profile（cordis.patch.yml）固定了 webserver 端口，启动器会自动跟随并提示；需改端口请编辑该文件 |
+| 改了端口却不生效 | 保存设置时端口会同步写入 profile（cordis.patch.yml）；若仍不生效，请重启 DSH 或查看 logs/dsh-web.log |
 | 托盘出现多个图标后消失 | 旧版本多实例并存所致；新版已加单实例保护，只会有一个托盘图标。若仍有多个，说明存在旧版本进程，重启电脑或手动结束多余 pythonw 进程 |
